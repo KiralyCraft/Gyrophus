@@ -14,7 +14,7 @@
 #include <string.h>
 #include <inttypes.h>
 
-#define GYRO_AVERAGE_SAMPLES 512
+#define GYRO_AVERAGE_SAMPLES 64
 #define IIO_BUFFER_SIZE 1
 
 typedef struct
@@ -28,7 +28,7 @@ int main()
 	setvbuf( stdout, NULL, _IONBF, 0 );
 	setvbuf( stderr, NULL, _IONBF, 0 );
 
-	struct iio_context* iioContext =  iio_create_network_context("192.168.0.46");
+	struct iio_context* iioContext =  iio_create_local_context();
 	struct iio_device* theGyro = iio_context_find_device(iioContext, "lsm6ds3_gyro");
 	struct iio_buffer* iioBuffer;
 
@@ -45,7 +45,7 @@ int main()
 			const char* attrName = iio_device_get_attr(theGyro,attrWalker);
 			if (strcmp(attrName,"sampling_frequency") == 0)
 			{
-				//TODO set to 208 Hz
+				iio_device_attr_write(theGyro,attrName,"208");
 				break;
 			}
 		}
@@ -89,24 +89,31 @@ int main()
 			}
 		}
 
-		iioBuffer = iio_device_create_buffer(theGyro, IIO_BUFFER_SIZE, false);
+		iioBuffer = iio_device_create_buffer(theGyro, IIO_BUFFER_SIZE, 0);
 
 
-		gyroDataAverage** averageIncrementalData = malloc(sizeof(gyroDataAverage*)*3);
+		gyroDataAverage** calibrationOffset = malloc(sizeof(gyroDataAverage*)*3);
 		for (uint8_t averageBuilder = 0;averageBuilder < 3;averageBuilder++)
 		{
-			averageIncrementalData[averageBuilder] = malloc(sizeof(gyroDataAverage));
-			gyroDataAverage* theAverage = averageIncrementalData[averageBuilder];
+			calibrationOffset[averageBuilder] = malloc(sizeof(gyroDataAverage));
+			gyroDataAverage* theAverage = calibrationOffset[averageBuilder];
 			theAverage -> averageValue = 0;
 			theAverage -> sampleCount = 0;
 		}
 
+		double* angularDataScale = malloc(sizeof(double)*3);
 		int16_t* angularData = malloc(sizeof(int16_t)*3);
 		uint8_t isGyroCalibrated = 0;
 		uint8_t isDataDirty = 0;
 		uint8_t measurementsToSkip = 0;
 		uint8_t stabilizationMeasurements = 16;
 		int64_t lastTimestamp = 0;
+
+		double* eulerAngles = malloc(sizeof(double)*3);
+		eulerAngles[0] = 0;
+		eulerAngles[1] = 0;
+		eulerAngles[2] = 0;
+
 		while(1)
 		{
 			ssize_t readBytes = iio_buffer_refill(iioBuffer);
@@ -122,6 +129,7 @@ int main()
 
 			int16_t x,y,z;
 			int64_t currentTimestamp;
+			int64_t timestampDifference;
 
 			for (uint8_t channelIterator = 0; channelIterator < 4; channelIterator++)
 			{
@@ -140,11 +148,17 @@ int main()
 					if (channelIterator < 3)
 					{
 						angularData[channelIterator] = *(int16_t *)bufferPointerLocation;
+						angularDataScale[channelIterator] = channelDataFormat->scale;
 					}
-					else if (channelIterator == 3)
+					else if (channelIterator == 3) //The last channel read
 					{
 						currentTimestamp = *(int64_t *)bufferPointerLocation;
-						if ((currentTimestamp - lastTimestamp)/1000 > 4850)
+						/*
+						 * The gyro sometimes reports bogus data. It's been observed that these are correlated with an increase in reading latency, and usually come in pairs of two
+						 * A sampling rate of 208 Hz is ~4.807 ms, or 4807 us.
+						 */
+						timestampDifference = currentTimestamp - lastTimestamp;
+						if (timestampDifference/1000 > 4850)
 						{
 							measurementsToSkip = 2;
 						}
@@ -178,7 +192,7 @@ int main()
 					printf("Calibrating gyro\n");
 					for (uint8_t axisWalker=0; axisWalker<3; axisWalker++)
 					{
-						gyroDataAverage* gyroAverage = averageIncrementalData[axisWalker];
+						gyroDataAverage* gyroAverage = calibrationOffset[axisWalker];
 						if (gyroAverage->sampleCount < GYRO_AVERAGE_SAMPLES)
 						{
 							gyroAverage->sampleCount++;
@@ -194,16 +208,20 @@ int main()
 						}
 						else if (gyroAverage->sampleCount == GYRO_AVERAGE_SAMPLES)
 						{
-							isGyroCalibrated = true;
+							isGyroCalibrated = 1;
 						}
 					}
 				}
 				else
 				{
-					printf("%d,%d,%d\n",
-							angularData[0] - averageIncrementalData[0]->averageValue,
-							angularData[1] - averageIncrementalData[1]->averageValue,
-							angularData[2] - averageIncrementalData[2]->averageValue);
+					double timeStamp = timestampDifference/1000000000.0; //Timestamps are in nanoseconds, gyro output is in rad/s
+
+					for (uint8_t axisWalker=0; axisWalker<3; axisWalker++)
+					{
+						eulerAngles[axisWalker] += (timeStamp/(57.295779513 * 2))*(angularData[axisWalker] - calibrationOffset[axisWalker]->averageValue);
+					}
+
+					printf("%f,%f,%f\n",eulerAngles[0],eulerAngles[1],eulerAngles[2]);
 				}
 			}
 

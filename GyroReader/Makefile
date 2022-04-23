@@ -1,6 +1,6 @@
 PROJECT_ROOT = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-OBJS = gyro.o
+OBJS = gyrophus.o
 
 LDFLAGS += -liio
 ifeq ($(BUILD_MODE),debug)
@@ -9,7 +9,7 @@ else ifeq ($(BUILD_MODE),run)
 	CFLAGS += -O2
 endif
 
-all:	gyro
+all:	gyrophus
 
 gyro:	$(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^
