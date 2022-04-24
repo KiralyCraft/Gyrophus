@@ -1,24 +1,20 @@
 PROJECT_ROOT = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-OBJS = gyrophus.o
-
-LDFLAGS += -liio
+LDFLAGS += -liio -lpthread
 ifeq ($(BUILD_MODE),debug)
 	CFLAGS += -g
 else ifeq ($(BUILD_MODE),run)
 	CFLAGS += -O2
 endif
 
-all:	gyrophus
+SRC = test.c gyrophus.c gyrophus_device_thread.c
+BIN = $(patsubst %.c,%.o,$(SRC))
 
-gyro:	$(OBJS)
-	$(CXX) $(LDFLAGS) -o $@ $^
-
-%.o:	$(PROJECT_ROOT)%.cpp
-	$(CXX) -c $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS) -o $@ $<
+all: 	$(BIN)
+		$(CC) $(BIN) -o $@ $(LDFLAGS)
 
 %.o:	$(PROJECT_ROOT)%.c
-	$(CC) -c $(CFLAGS) $(CPPFLAGS) -o $@ $<
+		$(CC) -c $(CFLAGS) $(CPPFLAGS) -o $@ $<
 
 clean:
-	rm -fr gyro $(OBJS)
+		rm -f $(BIN)
